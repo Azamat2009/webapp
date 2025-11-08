@@ -3,9 +3,14 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 require('dotenv').config();
 const { Pool } = require('pg');
+const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const BOT_TOKEN = process.env.BOT_TOKEN || '7739577660:AAGpO1BazLeEkzOZe4vw8jlD7jWMFyp_p8I';
+
+// Initialize Telegram Bot
+const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
 // Middleware
 app.use(cors());
@@ -181,7 +186,82 @@ app.get('/api/user/:telegram_id', async (req, res) => {
   }
 });
 
-// Process Stars payment
+// Create invoice for Stars payment
+app.post('/api/payment/create-invoice', async (req, res) => {
+  try {
+    const { telegram_id } = req.body;
+    
+    if (!telegram_id) {
+      return res.status(400).json({ error: 'Telegram ID is required' });
+    }
+
+    // Verify user exists
+    const userCheck = await pool.query(
+      'SELECT * FROM users WHERE telegram_id = $1',
+      [telegram_id]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Generate unique invoice payload
+    const invoicePayload = `stars_${telegram_id}_${Date.now()}`;
+    
+    // Create invoice payload for database
+    await pool.query(
+      `INSERT INTO payments (telegram_id, invoice_payload, currency, total_amount, coins_awarded, status)
+       VALUES ($1, $2, $3, $4, $5, 'pending')
+       ON CONFLICT (invoice_payload) DO NOTHING`,
+      [telegram_id, invoicePayload, 'XTR', 1, 10000]
+    );
+
+    // Send invoice via Bot API
+    try {
+      await bot.sendInvoice(
+        telegram_id,
+        '10000 монет',
+        'Получите 10000 монет за звезды Telegram',
+        invoicePayload,
+        '', // provider_token - не нужен для Stars
+        'XTR', // currency - Telegram Stars
+        [
+          {
+            label: '10000 монет',
+            amount: 1 // 1 star
+          }
+        ],
+        {
+          start_parameter: invoicePayload,
+          need_name: false,
+          need_phone_number: false,
+          need_email: false,
+          need_shipping_address: false,
+          send_phone_number_to_provider: false,
+          send_email_to_provider: false,
+          is_flexible: false
+        }
+      );
+
+      res.json({
+        success: true,
+        message: 'Invoice sent successfully',
+        invoice_payload: invoicePayload
+      });
+    } catch (botError) {
+      console.error('Error sending invoice:', botError);
+      return res.status(500).json({ 
+        error: 'Failed to send invoice',
+        message: botError.message 
+      });
+    }
+  } catch (error) {
+    console.error('Error in /api/payment/create-invoice:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Process Stars payment (for successful payment updates)
 app.post('/api/payment/stars', async (req, res) => {
   try {
     console.log('Payment request received:', {
@@ -288,6 +368,114 @@ app.post('/api/payment/stars', async (req, res) => {
   }
 });
 
+// Webhook for Telegram Bot updates (for payment processing)
+app.post('/webhook', express.json(), async (req, res) => {
+  try {
+    const update = req.body;
+    
+    // Handle pre_checkout_query
+    if (update.pre_checkout_query) {
+      const query = update.pre_checkout_query;
+      console.log('Pre-checkout query received:', query);
+      
+      // Always approve the payment for digital goods
+      try {
+        await bot.answerPreCheckoutQuery(query.id, true);
+        console.log('Pre-checkout query approved');
+      } catch (error) {
+        console.error('Error answering pre-checkout query:', error);
+      }
+    }
+    
+    // Handle successful payment
+    if (update.message && update.message.successful_payment) {
+      const payment = update.message.successful_payment;
+      const telegram_id = update.message.from.id;
+      const invoicePayload = payment.invoice_payload;
+      
+      console.log('Successful payment received:', {
+        telegram_id,
+        invoice_payload: invoicePayload,
+        total_amount: payment.total_amount,
+        currency: payment.currency
+      });
+
+      // Check if payment already processed
+      const existingPayment = await pool.query(
+        'SELECT * FROM payments WHERE invoice_payload = $1',
+        [invoicePayload]
+      );
+
+      if (existingPayment.rows.length > 0 && existingPayment.rows[0].status === 'completed') {
+        console.log('Payment already processed');
+        return res.json({ ok: true });
+      }
+
+      // Verify user exists
+      const userCheck = await pool.query(
+        'SELECT * FROM users WHERE telegram_id = $1',
+        [telegram_id]
+      );
+
+      if (userCheck.rows.length === 0) {
+        console.error('User not found for payment');
+        return res.json({ ok: true });
+      }
+
+      const coinsAwarded = 10000;
+
+      // Record payment
+      let paymentResult;
+      if (existingPayment.rows.length > 0) {
+        paymentResult = await pool.query(
+          `UPDATE payments 
+           SET status = 'completed', 
+               coins_awarded = $1,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE invoice_payload = $2
+           RETURNING *`,
+          [coinsAwarded, invoicePayload]
+        );
+      } else {
+        paymentResult = await pool.query(
+          `INSERT INTO payments (telegram_id, invoice_payload, currency, total_amount, coins_awarded, status)
+           VALUES ($1, $2, $3, $4, $5, 'completed')
+           RETURNING *`,
+          [telegram_id, invoicePayload, payment.currency || 'XTR', payment.total_amount || 1, coinsAwarded]
+        );
+      }
+
+      // Award coins to user
+      if (existingPayment.rows.length === 0 || existingPayment.rows[0].status !== 'completed') {
+        await pool.query(
+          `UPDATE users 
+           SET coins = coins + $1, 
+               updated_at = CURRENT_TIMESTAMP
+           WHERE telegram_id = $2`,
+          [coinsAwarded, telegram_id]
+        );
+
+        // Send confirmation message to user
+        try {
+          await bot.sendMessage(
+            telegram_id,
+            `✅ Оплата успешна! Вам начислено ${coinsAwarded} монет!`
+          );
+        } catch (msgError) {
+          console.error('Error sending confirmation message:', msgError);
+        }
+
+        console.log('Coins awarded successfully to user:', telegram_id);
+      }
+    }
+    
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Error in webhook:', error);
+    res.json({ ok: true }); // Always return ok to prevent Telegram from retrying
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -295,5 +483,6 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  console.log(`Bot token: ${BOT_TOKEN ? 'Set' : 'Not set'}`);
 });
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
@@ -10,7 +10,6 @@ function App() {
   const [clicking, setClicking] = useState(false);
   const [clickAnimation, setClickAnimation] = useState(null);
   const [processingPayment, setProcessingPayment] = useState(false);
-  const currentInvoicePayloadRef = useRef(null);
 
   const loadUser = async (telegramUser) => {
     try {
@@ -89,172 +88,60 @@ function App() {
     }
   };
 
-  const handlePaymentSuccess = useCallback(async (event) => {
-    console.log('handlePaymentSuccess called with event:', event);
-    console.log('Current user:', user);
-    
-    if (!user) {
-      console.error('No user available for payment processing');
-      return;
-    }
 
-    // Use the invoice payload from ref
-    let invoicePayload = currentInvoicePayloadRef.current;
-    
-    if (!invoicePayload) {
-      // Generate fallback payload based on user and timestamp
-      invoicePayload = `stars_${user.telegram_id}_${Date.now()}`;
-      console.log('Generated fallback payload:', invoicePayload);
-    }
-
-    console.log('Sending payment to backend:', {
-      telegram_id: user.telegram_id,
-      invoice_payload: invoicePayload,
-      API_URL
-    });
-
-    try {
-      // Send payment confirmation to backend
-      const response = await fetch(`${API_URL}/api/payment/stars`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          telegram_id: user.telegram_id,
-          invoice_payload: invoicePayload,
-          currency: 'XTR',
-          total_amount: event?.total_amount || 1
-        }),
-      });
-
-      console.log('Backend response status:', response.status);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        console.error('Backend error:', errorData);
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log('Backend response data:', data);
-
-      if (data.success) {
-        // Update user data
-        setUser(data.user);
-        loadLeaderboard();
-
-        // Show success message
-        if (window.Telegram?.WebApp) {
-          window.Telegram.WebApp.showAlert(`Успешно! Получено ${data.coins_awarded} монет!`);
-          window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-        }
-
-        // Animation for coins
-        const x = Math.random() * 200 - 100;
-        const y = Math.random() * 200 - 100;
-        setClickAnimation({ x, y, coins: data.coins_awarded });
-        setTimeout(() => setClickAnimation(null), 2000);
-      } else {
-        throw new Error(data.error || 'Payment processing failed');
-      }
-    } catch (error) {
-      console.error('Error processing payment:', error);
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack,
-        API_URL
-      });
-      
-      if (window.Telegram?.WebApp) {
-        const errorMsg = error.message.includes('fetch') 
-          ? 'Не удалось подключиться к серверу. Проверьте настройки API_URL.' 
-          : `Ошибка: ${error.message}`;
-        window.Telegram.WebApp.showAlert(errorMsg);
-      }
-    } finally {
-      console.log('Payment processing finished, resetting state');
-      setProcessingPayment(false);
-      currentInvoicePayloadRef.current = null;
-    }
-  }, [user]);
-
-  const handleBuyStars = () => {
+  const handleBuyStars = async () => {
     if (processingPayment || !user || !window.Telegram?.WebApp) {
       console.log('Cannot process payment:', { processingPayment, user: !!user, hasWebApp: !!window.Telegram?.WebApp });
       return;
     }
 
     const tg = window.Telegram.WebApp;
-    
-    // Generate unique invoice payload
-    const invoicePayload = `stars_${user.telegram_id}_${Date.now()}`;
-    console.log('Creating invoice with payload:', invoicePayload);
-    currentInvoicePayloadRef.current = invoicePayload;
-
-    // Create invoice for Stars payment
-    // For Telegram Stars, we use openInvoice with XTR currency
-    const invoice = {
-      title: '10000 монет',
-      description: 'Получите 10000 монет за звезды Telegram',
-      currency: 'XTR', // XTR is the currency code for Telegram Stars
-      prices: [
-        {
-          label: '10000 монет',
-          amount: 1 // 1 star (minimum amount)
-        }
-      ],
-      payload: invoicePayload,
-      provider_token: '', // Not needed for Stars
-      provider_data: JSON.stringify({
-        telegram_id: user.telegram_id
-      })
-    };
-
-    console.log('Opening invoice:', invoice);
     setProcessingPayment(true);
     
-    // Open invoice - for Stars payments
-    // The callback fires when invoice is closed (paid, cancelled, or failed)
     try {
-      tg.openInvoice(invoice, (status) => {
-        console.log('Invoice callback received with status:', status);
-        console.log('Status type:', typeof status);
-        console.log('Full status object:', JSON.stringify(status));
-        
-        // Check payment status
-        const isPaid = status === 'paid' || (typeof status === 'object' && status?.status === 'paid');
-        const isCancelled = status === 'cancelled' || (typeof status === 'object' && status?.status === 'cancelled');
-        const isFailed = status === 'failed' || (typeof status === 'object' && status?.status === 'failed');
-        
-        if (isPaid) {
-          console.log('Payment successful via callback');
-          // Payment successful - process payment
-          // Keep processing state true until payment is processed
-          const paymentData = typeof status === 'object' ? status : { status: 'paid', total_amount: 1 };
-          handlePaymentSuccess(paymentData);
-        } else {
-          // Reset processing state for cancelled/failed payments
-          setProcessingPayment(false);
-          currentInvoicePayloadRef.current = null;
-          
-          if (isCancelled) {
-            console.log('Payment cancelled');
-            tg.showAlert('Оплата отменена');
-          } else if (isFailed) {
-            console.log('Payment failed');
-            tg.showAlert('Оплата не удалась');
-          } else {
-            console.log('Unknown payment status:', status);
-            tg.showAlert('Статус платежа неизвестен. Проверьте консоль.');
-          }
-        }
+      console.log('Requesting invoice creation for user:', user.telegram_id);
+      
+      // Request invoice creation from backend
+      const response = await fetch(`${API_URL}/api/payment/create-invoice`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          telegram_id: user.telegram_id
+        }),
       });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log('Invoice sent successfully');
+        // Invoice will be sent to user via Telegram bot
+        // User will receive a message with Pay button
+        // After payment, webhook will process it and user will receive coins
+        tg.showAlert('Инвойс отправлен! Проверьте чат с ботом для оплаты.');
+        
+        // Refresh user data after a delay to check if payment was processed
+        setTimeout(async () => {
+          try {
+            const userResponse = await fetch(`${API_URL}/api/user/${user.telegram_id}`);
+            if (userResponse.ok) {
+              const userData = await userResponse.json();
+              setUser(userData);
+              loadLeaderboard();
+            }
+          } catch (error) {
+            console.error('Error refreshing user data:', error);
+          }
+        }, 5000);
+      } else {
+        throw new Error(data.error || 'Failed to create invoice');
+      }
     } catch (error) {
-      console.error('Error opening invoice:', error);
+      console.error('Error creating invoice:', error);
+      tg.showAlert(`Ошибка: ${error.message}`);
+    } finally {
       setProcessingPayment(false);
-      currentInvoicePayloadRef.current = null;
-      tg.showAlert('Ошибка при открытии платежной формы');
     }
   };
 
@@ -274,45 +161,45 @@ function App() {
         loadUser({ id: 123456789, first_name: 'Test User', username: 'testuser' });
       }
 
-      // Listen for invoice closed event (payment completed)
-      // Note: For Stars payments, the callback from openInvoice is usually sufficient
-      // But we keep this as a backup
-      const handleInvoiceClosed = (event) => {
-        console.log('Invoice closed event received:', event);
-        console.log('Event type:', typeof event);
-        console.log('Event status:', event?.status);
-        
-        // Only process if status is paid
-        if (event && (event.status === 'paid' || event === 'paid')) {
-          console.log('Processing payment via invoiceClosed event');
-          // Use a small delay to ensure callback from openInvoice processes first
-          setTimeout(() => {
-            handlePaymentSuccess(event);
-          }, 100);
-        } else {
-          console.log('Invoice closed but not paid, status:', event?.status || event);
-        }
-      };
-
-      // Register event listener
-      if (tg.onEvent) {
-        tg.onEvent('invoiceClosed', handleInvoiceClosed);
-        console.log('Registered invoiceClosed event listener');
-      } else {
-        console.warn('onEvent not available in Telegram WebApp');
-      }
-
-      // Cleanup
-      return () => {
-        if (tg.offEvent) {
-          tg.offEvent('invoiceClosed', handleInvoiceClosed);
-        }
-      };
+      // Note: Payment will be processed via webhook on backend
+      // User will receive a message from bot after successful payment
     } else {
       // Fallback for local development
       loadUser({ id: 123456789, first_name: 'Test User', username: 'testuser' });
     }
-  }, [handlePaymentSuccess]);
+  }, []);
+
+  // Separate effect to poll for payment updates
+  useEffect(() => {
+    if (!user || !user.telegram_id) return;
+
+    // Poll for user updates to check if payment was processed
+    const checkPaymentInterval = setInterval(async () => {
+      try {
+        const userResponse = await fetch(`${API_URL}/api/user/${user.telegram_id}`);
+        if (userResponse.ok) {
+          const userData = await userResponse.json();
+          // If coins increased, payment was processed
+          if (userData.coins > user.coins) {
+            const coinsAdded = userData.coins - user.coins;
+            setUser(userData);
+            loadLeaderboard();
+            if (window.Telegram?.WebApp) {
+              window.Telegram.WebApp.showAlert(`Успешно! Получено ${coinsAdded} монет!`);
+              window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error checking payment status:', error);
+      }
+    }, 3000); // Check every 3 seconds
+
+    // Cleanup
+    return () => {
+      clearInterval(checkPaymentInterval);
+    };
+  }, [user]);
 
   if (loading) {
     return (
