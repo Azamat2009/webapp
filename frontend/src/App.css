@@ -210,6 +210,73 @@
   color: var(--tg-theme-hint-color, #999999);
 }
 
+.payment-section {
+  margin-top: 20px;
+  margin-bottom: 20px;
+}
+
+.buy-stars-button {
+  width: 100%;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+  border: none;
+  border-radius: 15px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #000;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.4);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  user-select: none;
+}
+
+.buy-stars-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 215, 0, 0.6);
+}
+
+.buy-stars-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 10px rgba(255, 215, 0, 0.3);
+}
+
+.buy-stars-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.stars-icon {
+  font-size: 24px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.spinner {
+  font-size: 20px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 480px) {
   .app {
     padding: 15px;
@@ -222,6 +289,11 @@
 
   .coin-emoji {
     font-size: 60px;
+  }
+
+  .buy-stars-button {
+    font-size: 16px;
+    padding: 14px 16px;
   }
 }
 
