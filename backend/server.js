@@ -184,11 +184,19 @@ app.get('/api/user/:telegram_id', async (req, res) => {
 // Process Stars payment
 app.post('/api/payment/stars', async (req, res) => {
   try {
+    console.log('Payment request received:', {
+      body: req.body,
+      headers: req.headers
+    });
+    
     const { telegram_id, invoice_payload, currency, total_amount } = req.body;
     
     if (!telegram_id || !invoice_payload) {
+      console.error('Missing required fields:', { telegram_id: !!telegram_id, invoice_payload: !!invoice_payload });
       return res.status(400).json({ error: 'Telegram ID and invoice payload are required' });
     }
+    
+    console.log('Processing payment for user:', telegram_id, 'with payload:', invoice_payload);
 
     // Check if payment already processed
     const existingPayment = await pool.query(
@@ -239,6 +247,8 @@ app.post('/api/payment/stars', async (req, res) => {
 
     // Only award coins if payment status changed to completed
     if (existingPayment.rows.length === 0 || existingPayment.rows[0].status !== 'completed') {
+      console.log('Awarding coins to user:', telegram_id, 'amount:', coinsAwarded);
+      
       // Award coins to user
       const userResult = await pool.query(
         `UPDATE users 
@@ -249,6 +259,8 @@ app.post('/api/payment/stars', async (req, res) => {
         [coinsAwarded, telegram_id]
       );
 
+      console.log('Coins awarded successfully. New balance:', userResult.rows[0]?.coins);
+
       res.json({
         success: true,
         user: userResult.rows[0],
@@ -256,6 +268,7 @@ app.post('/api/payment/stars', async (req, res) => {
         coins_awarded: coinsAwarded
       });
     } else {
+      console.log('Payment already processed for payload:', invoice_payload);
       // Payment was already processed
       res.json({
         success: true,
@@ -267,7 +280,11 @@ app.post('/api/payment/stars', async (req, res) => {
     }
   } catch (error) {
     console.error('Error in /api/payment/stars:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      message: error.message 
+    });
   }
 });
 
