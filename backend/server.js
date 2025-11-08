@@ -261,22 +261,19 @@ app.post('/api/payment/create-invoice', async (req, res) => {
   }
 });
 
-// Process Stars payment (for successful payment updates)
-app.post('/api/payment/stars', async (req, res) => {
+// Process Stars payment from Mini App (direct payment)
+app.post('/api/payment/stars/direct', async (req, res) => {
   try {
-    console.log('Payment request received:', {
-      body: req.body,
-      headers: req.headers
-    });
+    console.log('Direct payment request received:', req.body);
     
-    const { telegram_id, invoice_payload, currency, total_amount } = req.body;
+    const { telegram_id, invoice_payload, currency, total_amount, telegram_payment_charge_id } = req.body;
     
     if (!telegram_id || !invoice_payload) {
       console.error('Missing required fields:', { telegram_id: !!telegram_id, invoice_payload: !!invoice_payload });
       return res.status(400).json({ error: 'Telegram ID and invoice payload are required' });
     }
     
-    console.log('Processing payment for user:', telegram_id, 'with payload:', invoice_payload);
+    console.log('Processing direct payment for user:', telegram_id, 'with payload:', invoice_payload);
 
     // Check if payment already processed
     const existingPayment = await pool.query(
@@ -298,9 +295,10 @@ app.post('/api/payment/stars', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // For Stars payments, we trust the payment data from Telegram
-    // In production, you might want to verify with Telegram Bot API
+    // For Stars payments: 1 star = 10000 coins
     const coinsAwarded = 10000;
+    
+    console.log('Awarding coins:', coinsAwarded, 'for payment:', invoice_payload);
 
     // Record payment
     let paymentResult;
@@ -349,17 +347,22 @@ app.post('/api/payment/stars', async (req, res) => {
       });
     } else {
       console.log('Payment already processed for payload:', invoice_payload);
-      // Payment was already processed
+      // Payment was already processed - return current user data
+      const currentUser = await pool.query(
+        'SELECT * FROM users WHERE telegram_id = $1',
+        [telegram_id]
+      );
+      
       res.json({
         success: true,
-        user: userCheck.rows[0],
+        user: currentUser.rows[0] || userCheck.rows[0],
         payment: paymentResult.rows[0],
         coins_awarded: 0,
         message: 'Payment already processed'
       });
     }
   } catch (error) {
-    console.error('Error in /api/payment/stars:', error);
+    console.error('Error in /api/payment/stars/direct:', error);
     console.error('Error stack:', error.stack);
     res.status(500).json({ 
       error: 'Internal server error',
@@ -370,21 +373,40 @@ app.post('/api/payment/stars', async (req, res) => {
 
 // Webhook for Telegram Bot updates (for payment processing)
 app.post('/webhook', express.json(), async (req, res) => {
+  // Send immediate response to Telegram to prevent timeout
+  res.json({ ok: true });
+  
   try {
     const update = req.body;
+    console.log('Webhook update received:', JSON.stringify(update, null, 2));
     
-    // Handle pre_checkout_query
+    // Handle pre_checkout_query - MUST respond within 10 seconds
     if (update.pre_checkout_query) {
       const query = update.pre_checkout_query;
-      console.log('Pre-checkout query received:', query);
+      console.log('Pre-checkout query received:', {
+        id: query.id,
+        from: query.from.id,
+        currency: query.currency,
+        total_amount: query.total_amount,
+        invoice_payload: query.invoice_payload
+      });
       
-      // Always approve the payment for digital goods
-      try {
-        await bot.answerPreCheckoutQuery(query.id, true);
-        console.log('Pre-checkout query approved');
-      } catch (error) {
-        console.error('Error answering pre-checkout query:', error);
-      }
+      // Always approve the payment for digital goods immediately
+      // This must be done asynchronously after sending response
+      bot.answerPreCheckoutQuery(query.id, true)
+        .then(() => {
+          console.log('Pre-checkout query approved for:', query.id);
+        })
+        .catch((error) => {
+          console.error('Error answering pre-checkout query:', error);
+          // Try to answer with error to prevent hanging
+          bot.answerPreCheckoutQuery(query.id, false, {
+            error_message: 'Payment processing error. Please try again.'
+          }).catch((err) => {
+            console.error('Error sending error response:', err);
+          });
+        });
+      return;
     }
     
     // Handle successful payment
@@ -447,32 +469,29 @@ app.post('/webhook', express.json(), async (req, res) => {
 
       // Award coins to user
       if (existingPayment.rows.length === 0 || existingPayment.rows[0].status !== 'completed') {
-        await pool.query(
+        const userResult = await pool.query(
           `UPDATE users 
            SET coins = coins + $1, 
                updated_at = CURRENT_TIMESTAMP
-           WHERE telegram_id = $2`,
+           WHERE telegram_id = $2
+           RETURNING *`,
           [coinsAwarded, telegram_id]
         );
 
-        // Send confirmation message to user
-        try {
-          await bot.sendMessage(
-            telegram_id,
-            `✅ Оплата успешна! Вам начислено ${coinsAwarded} монет!`
-          );
-        } catch (msgError) {
-          console.error('Error sending confirmation message:', msgError);
-        }
+        console.log('Coins awarded successfully to user:', telegram_id, 'New balance:', userResult.rows[0]?.coins);
 
-        console.log('Coins awarded successfully to user:', telegram_id);
+        // Send confirmation message to user (async, don't wait)
+        bot.sendMessage(
+          telegram_id,
+          `✅ Оплата успешна! Вам начислено ${coinsAwarded} монет!`
+        ).catch(msgError => {
+          console.error('Error sending confirmation message:', msgError);
+        });
       }
     }
-    
-    res.json({ ok: true });
   } catch (error) {
     console.error('Error in webhook:', error);
-    res.json({ ok: true }); // Always return ok to prevent Telegram from retrying
+    console.error('Error stack:', error.stack);
   }
 });
 

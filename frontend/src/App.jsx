@@ -89,7 +89,104 @@ function App() {
   };
 
 
-  const handleBuyStars = async () => {
+  // Direct payment in Mini App (без выхода из приложения)
+  const handleBuyStarsDirect = () => {
+    if (processingPayment || !user || !window.Telegram?.WebApp) {
+      console.log('Cannot process payment:', { processingPayment, user: !!user, hasWebApp: !!window.Telegram?.WebApp });
+      return;
+    }
+
+    const tg = window.Telegram.WebApp;
+    
+    // Generate unique invoice payload
+    const invoicePayload = `stars_direct_${user.telegram_id}_${Date.now()}`;
+    console.log('Creating direct invoice with payload:', invoicePayload);
+
+    // Create invoice for Stars payment in Mini App
+    const invoice = {
+      title: '10000 монет',
+      description: 'Получите 10000 монет за 1 звезду Telegram',
+      currency: 'XTR', // XTR is the currency code for Telegram Stars
+      prices: [
+        {
+          label: '10000 монет',
+          amount: 1 // 1 star
+        }
+      ],
+      payload: invoicePayload
+    };
+
+    console.log('Opening invoice in Mini App:', invoice);
+    setProcessingPayment(true);
+    
+    // Open invoice directly in Mini App
+    try {
+      tg.openInvoice(invoice, async (status) => {
+        console.log('Invoice callback status:', status);
+        
+        if (status === 'paid') {
+          console.log('Payment successful via direct payment');
+          
+          try {
+            // Send payment confirmation to backend
+            const response = await fetch(`${API_URL}/api/payment/stars/direct`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                telegram_id: user.telegram_id,
+                invoice_payload: invoicePayload,
+                currency: 'XTR',
+                total_amount: 1
+              }),
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+              // Update user data
+              setUser(data.user);
+              loadLeaderboard();
+
+              // Show success message
+              tg.showAlert(`✅ Успешно! Получено ${data.coins_awarded} монет!`);
+              tg.HapticFeedback.notificationOccurred('success');
+
+              // Animation for coins
+              const x = Math.random() * 200 - 100;
+              const y = Math.random() * 200 - 100;
+              setClickAnimation({ x, y, coins: data.coins_awarded });
+              setTimeout(() => setClickAnimation(null), 2000);
+            } else {
+              throw new Error(data.error || 'Payment processing failed');
+            }
+          } catch (error) {
+            console.error('Error processing direct payment:', error);
+            tg.showAlert(`Ошибка при обработке платежа: ${error.message}`);
+          } finally {
+            setProcessingPayment(false);
+          }
+        } else {
+          setProcessingPayment(false);
+          if (status === 'cancelled') {
+            console.log('Payment cancelled');
+            tg.showAlert('Оплата отменена');
+          } else if (status === 'failed') {
+            console.log('Payment failed');
+            tg.showAlert('Оплата не удалась');
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error opening invoice:', error);
+      setProcessingPayment(false);
+      tg.showAlert('Ошибка при открытии платежной формы');
+    }
+  };
+
+  // Payment via bot (в чате с ботом)
+  const handleBuyStarsViaBot = async () => {
     if (processingPayment || !user || !window.Telegram?.WebApp) {
       console.log('Cannot process payment:', { processingPayment, user: !!user, hasWebApp: !!window.Telegram?.WebApp });
       return;
@@ -116,31 +213,14 @@ function App() {
       
       if (data.success) {
         console.log('Invoice sent successfully');
-        // Invoice will be sent to user via Telegram bot
-        // User will receive a message with Pay button
-        // After payment, webhook will process it and user will receive coins
-        tg.showAlert('Инвойс отправлен! Проверьте чат с ботом для оплаты.');
-        
-        // Refresh user data after a delay to check if payment was processed
-        setTimeout(async () => {
-          try {
-            const userResponse = await fetch(`${API_URL}/api/user/${user.telegram_id}`);
-            if (userResponse.ok) {
-              const userData = await userResponse.json();
-              setUser(userData);
-              loadLeaderboard();
-            }
-          } catch (error) {
-            console.error('Error refreshing user data:', error);
-          }
-        }, 5000);
+        tg.showAlert('💳 Инвойс отправлен! Проверьте чат с ботом для оплаты.');
+        setProcessingPayment(false);
       } else {
         throw new Error(data.error || 'Failed to create invoice');
       }
     } catch (error) {
       console.error('Error creating invoice:', error);
       tg.showAlert(`Ошибка: ${error.message}`);
-    } finally {
       setProcessingPayment(false);
     }
   };
@@ -265,23 +345,46 @@ function App() {
         </div>
 
         <div className="payment-section">
-          <button 
-            className="buy-stars-button" 
-            onClick={handleBuyStars}
-            disabled={processingPayment || !window.Telegram?.WebApp}
-          >
-            {processingPayment ? (
-              <>
-                <span className="spinner">⏳</span>
-                <span>Обработка...</span>
-              </>
-            ) : (
-              <>
-                <span className="stars-icon">⭐</span>
-                <span>Купить 10000 монет за звезды</span>
-              </>
-            )}
-          </button>
+          <div className="payment-options">
+            <h3 className="payment-title">💰 Пополнить баланс</h3>
+            <p className="payment-description">1 звезда = 10000 монет</p>
+            
+            <button 
+              className="buy-stars-button buy-stars-direct" 
+              onClick={handleBuyStarsDirect}
+              disabled={processingPayment || !window.Telegram?.WebApp}
+            >
+              {processingPayment ? (
+                <>
+                  <span className="spinner">⏳</span>
+                  <span>Обработка...</span>
+                </>
+              ) : (
+                <>
+                  <span className="stars-icon">⭐</span>
+                  <span>Оплатить прямо здесь (1 звезда)</span>
+                </>
+              )}
+            </button>
+
+            <button 
+              className="buy-stars-button buy-stars-bot" 
+              onClick={handleBuyStarsViaBot}
+              disabled={processingPayment || !window.Telegram?.WebApp}
+            >
+              {processingPayment ? (
+                <>
+                  <span className="spinner">⏳</span>
+                  <span>Обработка...</span>
+                </>
+              ) : (
+                <>
+                  <span className="bot-icon">🤖</span>
+                  <span>Оплатить через бота</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 

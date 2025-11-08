@@ -215,13 +215,33 @@
   margin-bottom: 20px;
 }
 
+.payment-options {
+  background: var(--tg-theme-secondary-bg-color, #f0f0f0);
+  padding: 20px;
+  border-radius: 15px;
+}
+
+.payment-title {
+  font-size: 20px;
+  font-weight: bold;
+  margin-bottom: 8px;
+  text-align: center;
+  color: var(--tg-theme-text-color, #000000);
+}
+
+.payment-description {
+  font-size: 14px;
+  color: var(--tg-theme-hint-color, #999999);
+  text-align: center;
+  margin-bottom: 15px;
+}
+
 .buy-stars-button {
   width: 100%;
   padding: 16px 20px;
-  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
   border: none;
-  border-radius: 15px;
-  font-size: 18px;
+  border-radius: 12px;
+  font-size: 16px;
   font-weight: bold;
   color: #000;
   cursor: pointer;
@@ -229,24 +249,54 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.4);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   user-select: none;
+  margin-bottom: 12px;
 }
 
-.buy-stars-button:hover:not(:disabled) {
+.buy-stars-button:last-child {
+  margin-bottom: 0;
+}
+
+.buy-stars-direct {
+  background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+  box-shadow: 0 4px 15px rgba(255, 215, 0, 0.4);
+}
+
+.buy-stars-direct:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(255, 215, 0, 0.6);
 }
 
-.buy-stars-button:active:not(:disabled) {
+.buy-stars-direct:active:not(:disabled) {
   transform: translateY(0);
   box-shadow: 0 2px 10px rgba(255, 215, 0, 0.3);
+}
+
+.buy-stars-bot {
+  background: linear-gradient(135deg, #3390ec 0%, #1e6dd0 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(51, 144, 236, 0.4);
+}
+
+.buy-stars-bot:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(51, 144, 236, 0.6);
+}
+
+.buy-stars-bot:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 10px rgba(51, 144, 236, 0.3);
 }
 
 .buy-stars-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.bot-icon {
+  font-size: 20px;
 }
 
 .stars-icon {
